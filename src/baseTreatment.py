@@ -48,8 +48,6 @@ ac = acervo.copy()
 # -------------------------------------------------------------------
 # 2.1 Filtrar tipos de material físicos e circuláveis
 # -------------------------------------------------------------------
-# Removemos tipos que não são relevantes para realocação de acervo físico:
-# Disco, Partitura, CD de Áudio, CD-ROM, DVD, Vídeo, Fotografia, etc.
 TIPOS_FISICOS = [
     "Livro", "Folheto", "Dissertação", "Monografia", "Tese",
     "Relatório Acadêmico", "Projeto de Pesquisa", "Manuscrito",
@@ -57,8 +55,7 @@ TIPOS_FISICOS = [
 ]
 antes = len(ac)
 ac = ac[ac["tipo_material"].isin(TIPOS_FISICOS)].copy()
-removidos = antes - len(ac)
-print(f"\n  [2.1] tipo_material — {removidos:,} registros de mídia não circulável removidos")
+print(f"\n  [2.1] tipo_material — {antes - len(ac):,} registros de mídia não circulável removidos")
 print(f"        Mantidos: {len(ac):,} registros")
 print(f"        Tipos mantidos: {sorted(ac['tipo_material'].unique())}")
 
@@ -73,7 +70,6 @@ for col in COLUNAS_TEXTO:
 
 # Remover sufixo " /" no final de títulos (artefato do padrão MARC21)
 ac["titulo"] = ac["titulo"].str.rstrip(" /").str.strip()
-
 print(f"\n  [2.2] Strings padronizadas: {COLUNAS_TEXTO}")
 
 # -------------------------------------------------------------------
@@ -82,59 +78,45 @@ print(f"\n  [2.2] Strings padronizadas: {COLUNAS_TEXTO}")
 # Formatos encontrados:
 #   "2008."     → ano com ponto no final (padrão MARC21)
 #   "c1997."    → prefixo "c" de copyright + ponto
-#   "[19--]."   → século conhecido, década desconhecida → NaN
-#   NaN         → ausente
+#   "[19--]."   → década desconhecida → NaN
 
 def limpar_ano(valor):
     if pd.isna(valor):
         return pd.NA
     s = str(valor).strip()
-    # Remove prefixo "c" de copyright
     s = re.sub(r"^c", "", s)
-    # Remove ponto final e colchetes
     s = re.sub(r"[\[\].]", "", s).strip()
-    # Se ainda tiver traços (ex: "19--"), é impreciso → NaN
     if "-" in s or not s.isdigit():
         return pd.NA
     ano = int(s)
-    # Valida intervalo razoável para publicações acadêmicas
     if 1800 <= ano <= 2025:
         return ano
     return pd.NA
 
 ac["ano"] = ac["ano"].apply(limpar_ano).astype("Int64")
-
 nulos_ano = ac["ano"].isna().sum()
 print(f"\n  [2.3] Campo 'ano' tratado")
-print(f"        Valores nulos após limpeza: {nulos_ano:,} ({nulos_ano/len(ac):.1%})")
-print(f"        Distribuição por década:\n"
-      f"{ac['ano'].dropna().apply(lambda x: f'{(x//10)*10}s').value_counts().sort_index().to_string()}")
+print(f"        Nulos após limpeza: {nulos_ano:,} ({nulos_ano/len(ac):.1%})")
 
 # -------------------------------------------------------------------
 # 2.4 Tratar campo 'isbn'
 # -------------------------------------------------------------------
-# Remover registros claramente inválidos como "(broch.)."
 def limpar_isbn(valor):
     if pd.isna(valor):
         return np.nan
-    s = str(valor).strip()
-    # ISBN válido: apenas dígitos, hífens e 'X' no final
-    s_clean = re.sub(r"[-\s]", "", s).upper()
-    if re.match(r"^[\dX]{10}$|^[\dX]{13}$", s_clean):
-        return s_clean
+    s = re.sub(r"[-\s]", "", str(valor)).upper()
+    if re.match(r"^[\dX]{10}$|^[\dX]{13}$", s):
+        return s
     return np.nan
 
 ac["isbn"] = ac["isbn"].apply(limpar_isbn)
-validos_isbn = ac["isbn"].notna().sum()
 print(f"\n  [2.4] Campo 'isbn' tratado")
-print(f"        ISBNs válidos: {validos_isbn:,} ({validos_isbn/len(ac):.1%})")
+print(f"        ISBNs válidos: {ac['isbn'].notna().sum():,} ({ac['isbn'].notna().sum()/len(ac):.1%})")
 
 # -------------------------------------------------------------------
 # 2.5 Tratar campo 'assunto' — separar múltiplos assuntos
 # -------------------------------------------------------------------
-# O campo usa "#$&" como separador entre assuntos (padrão MARC21)
 ac["assunto"] = ac["assunto"].astype(str).replace("nan", np.nan)
-
 ac["assunto_lista"] = ac["assunto"].apply(
     lambda x: [s.strip().rstrip(".") for s in str(x).split("#$&") if s.strip()]
     if pd.notna(x) else np.nan
@@ -142,26 +124,19 @@ ac["assunto_lista"] = ac["assunto"].apply(
 ac["assunto_principal"] = ac["assunto_lista"].apply(
     lambda x: x[0] if isinstance(x, list) and len(x) > 0 else np.nan
 )
-print(f"\n  [2.5] Campo 'assunto' separado em lista")
-print(f"        Registros com assunto: {ac['assunto_principal'].notna().sum():,}")
-print(f"        Registros sem assunto: {ac['assunto_principal'].isna().sum():,}")
+print(f"\n  [2.5] Campo 'assunto' separado em lista e extraído assunto_principal")
 
 # -------------------------------------------------------------------
 # 2.6 Remover coluna 'issn'
 # -------------------------------------------------------------------
-# issn tem 99.9% de valores nulos (só faz sentido para periódicos, que foram
-# removidos em 2.1). Mantemos isbn que tem cobertura razoável.
 ac = ac.drop(columns=["issn"])
-print(f"\n  [2.6] Coluna 'issn' removida (99.9% nula, exclusiva de periódicos)")
+print(f"\n  [2.6] Coluna 'issn' removida (99.9% nula)")
 
 # -------------------------------------------------------------------
-# 2.7 Verificar duplicatas em registro_sistema
+# 2.7 Verificar duplicatas em registro_sistema (apenas log)
 # -------------------------------------------------------------------
 dup = ac.duplicated(subset=["registro_sistema"]).sum()
-print(f"\n  [2.7] Duplicatas em registro_sistema: {dup}")
-if dup > 0:
-    ac = ac.drop_duplicates(subset=["registro_sistema"])
-    print(f"        {dup} duplicatas removidas")
+print(f"\n  [2.7] Duplicatas em registro_sistema: {dup} (nenhuma ação tomada)")
 
 print(f"\n  Shape final acervo: {ac.shape}")
 print(f"  Nulos restantes:\n{ac.isnull().sum().to_string()}")
@@ -191,64 +166,41 @@ ex["codigo_barras"] = ex["codigo_barras"].apply(limpar_codigo_barras)
 print(f"\n  [3.1] Sufixos de data removidos de 'codigo_barras'")
 
 # -------------------------------------------------------------------
-# 3.2 Tratar duplicatas em id_exemplar
+# 3.2 Registrar duplicatas (apenas log, sem remoção)
 # -------------------------------------------------------------------
-# Encontradas 280 linhas duplicadas em id_exemplar.
-# Causa: o mesmo id_exemplar aparece com codigo_barras sujo (com data)
-# e limpo. Após limpeza em 3.1, ficaram registros idênticos.
-# Estratégia: manter a versão com codigo_barras mais curto (o limpo).
-antes = len(ex)
-ex = ex.sort_values("codigo_barras").drop_duplicates(
-    subset=["id_exemplar"], keep="first"
-)
-print(f"\n  [3.2] Duplicatas em id_exemplar")
-print(f"        Removidas: {antes - len(ex)} | Mantidos: {len(ex):,}")
+dup_id = ex.duplicated(subset=["id_exemplar"]).sum()
+dup_cb = ex.duplicated(subset=["codigo_barras"]).sum()
+print(f"\n  [3.2] Duplicatas identificadas (mantidas para análise futura):")
+print(f"        id_exemplar   duplicados: {dup_id:,}")
+print(f"        codigo_barras duplicados: {dup_cb:,}")
+print(f"        ATENÇÃO: considerar tratamento antes da análise de empréstimos")
 
 # -------------------------------------------------------------------
-# 3.3 Tratar duplicatas em codigo_barras
+# 3.3 Remover o exemplar com biblioteca 'BSC03'
 # -------------------------------------------------------------------
-# 2.713 linhas com codigo_barras duplicado entre diferentes id_exemplar.
-# Causa: erro de cadastro — mesmo código de barras atribuído a 2 exemplares.
-# Estratégia: manter o registro com menor id_exemplar (mais antigo/original).
-antes = len(ex)
-ex = ex.sort_values("id_exemplar").drop_duplicates(
-    subset=["codigo_barras"], keep="first"
-)
-print(f"\n  [3.3] Duplicatas em codigo_barras")
-print(f"        Removidas: {antes - len(ex)} | Mantidos: {len(ex):,}")
-
-# -------------------------------------------------------------------
-# 3.4 Remover o exemplar com biblioteca 'BSC03'
-# -------------------------------------------------------------------
-# BSC03 é um código interno sem correspondência a uma biblioteca real.
-# Apenas 1 registro afetado.
 antes = len(ex)
 ex = ex[ex["biblioteca"] != "BSC03"].copy()
-print(f"\n  [3.4] Biblioteca 'BSC03' removida ({antes - len(ex)} registro)")
+print(f"\n  [3.3] Biblioteca 'BSC03' removida ({antes - len(ex)} registro)")
 
 # -------------------------------------------------------------------
-# 3.5 Padronizar strings
+# 3.4 Padronizar strings
 # -------------------------------------------------------------------
 for col in ["colecao", "biblioteca", "status_material", "localizacao"]:
     ex[col] = ex[col].astype(str).str.strip()
     ex[col] = ex[col].replace("nan", np.nan)
-
-print(f"\n  [3.5] Strings padronizadas")
+print(f"\n  [3.4] Strings padronizadas")
 
 # -------------------------------------------------------------------
-# 3.6 Remover exemplares com registro_sistema sem correspondência no acervo
+# 3.5 Remover exemplares com registro_sistema sem correspondência no acervo
 # -------------------------------------------------------------------
 ids_acervo_validos = set(ac["registro_sistema"].dropna())
 antes = len(ex)
 ex = ex[ex["registro_sistema"].isin(ids_acervo_validos)].copy()
-print(f"\n  [3.6] Exemplares órfãos (sem título no acervo) removidos: {antes - len(ex)}")
+print(f"\n  [3.5] Exemplares órfãos (sem título no acervo) removidos: {antes - len(ex):,}")
 
 # -------------------------------------------------------------------
-# 3.7 Criar coluna 'circulavel'
+# 3.6 Criar coluna 'circulavel'
 # -------------------------------------------------------------------
-# Booleano que indica se o exemplar pode ser emprestado.
-# Útil para a análise de realocação: só faz sentido realocar exemplares
-# que estão aptos à circulação.
 COLECOES_CIRCULAVEIS = {
     "Acervo Circulante", "Acervo de Desbaste",
     "Obras de Referência", "Publicações de Autores do RN",
@@ -260,10 +212,9 @@ ex["circulavel"] = (
     (ex["colecao"].isin(COLECOES_CIRCULAVEIS)) &
     (ex["status_material"] != "NÃO CIRCULA")
 )
-nao_circ = (~ex["circulavel"]).sum()
-print(f"\n  [3.7] Coluna 'circulavel' criada")
+print(f"\n  [3.6] Coluna 'circulavel' criada")
 print(f"        Circuláveis    : {ex['circulavel'].sum():,}")
-print(f"        Não circuláveis: {nao_circ:,}")
+print(f"        Não circuláveis: {(~ex['circulavel']).sum():,}")
 
 print(f"\n  Shape final exemplares: {ex.shape}")
 print(f"  Nulos restantes:\n{ex.isnull().sum().to_string()}")
