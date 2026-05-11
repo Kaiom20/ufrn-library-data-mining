@@ -1,10 +1,15 @@
 """
 Tratamento e consolidação dos empréstimos — UFRN (2018–2022)
 =============================================================
-Lê os 10 arquivos de empréstimos (2 semestres por ano),
-aplica limpeza padronizada e consolida em uma única base.
+Lê os arquivos de empréstimos por semestre, aplica limpeza
+padronizada e consolida em uma única base.
 
-Entrada : data/raw/emprestimos-XXXXXX.csv  (10 arquivos)
+Semestres excluídos por impacto da pandemia (COVID-19):
+  - 2020.2 (101 registros   — biblioteca fechada)
+  - 2021.1 (872 registros   — biblioteca fechada)
+  - 2021.2 (4.365 registros — retomada parcial)
+
+Entrada : data/raw/emprestimos-XXXXXX.csv  (arquivos)
 Saída   : data/processed/emprestimos_consolidado.csv
 
 Execute a partir da raiz do projeto:
@@ -19,25 +24,23 @@ import re
 # =============================================================================
 # 0. CONFIGURAÇÃO
 # =============================================================================
-RAW_DIR    = "data/raw"
-OUTPUT_DIR = "data/processed"
+RAW_DIR     = "data/raw"
+OUTPUT_DIR  = "data/processed"
 OUTPUT_PATH = os.path.join(OUTPUT_DIR, "emprestimos_consolidado.csv")
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# Semestres disponíveis com flag de pandemia
-# Formato: (nome_arquivo, ano, semestre, periodo_pandemia)
+# Semestres utilizados na análise
+# Excluídos: 2020.2, 2021.1 e 2021.2 por impacto da pandemia (COVID-19)
+# Formato: (nome_arquivo, ano, semestre)
 SEMESTRES = [
-    ("emprestimos-20181.csv", 2018, 1, False),
-    ("emprestimos-20182.csv", 2018, 2, False),
-    ("emprestimos-20191.csv", 2019, 1, False),
-    ("emprestimos-20192.csv", 2019, 2, False),
-    ("emprestimos-20201.csv", 2020, 1, False),  # começo da pandemia, ainda razoável
-    ("emprestimos-20202.csv", 2020, 2, True),   # biblioteca fechada (101 registros)
-    ("emprestimos-20211.csv", 2021, 1, True),   # biblioteca fechada (872 registros)
-    ("emprestimos-20212.csv", 2021, 2, True),   # retomada parcial (4.365 registros)
-    ("emprestimos-20221.csv", 2022, 1, False),  # retorno normal
-    ("emprestimos-20222.csv", 2022, 2, False),
+    ("emprestimos-20181.csv", 2018, 1),
+    ("emprestimos-20182.csv", 2018, 2),
+    ("emprestimos-20191.csv", 2019, 1),
+    ("emprestimos-20192.csv", 2019, 2),
+    ("emprestimos-20201.csv", 2020, 1),
+    ("emprestimos-20221.csv", 2022, 1),
+    ("emprestimos-20222.csv", 2022, 2),
 ]
 
 # =============================================================================
@@ -52,7 +55,7 @@ def limpar_codigo_barras(codigo):
     return s.strip()
 
 
-def tratar_semestre(arquivo, ano, semestre, pandemia):
+def tratar_semestre(arquivo, ano, semestre):
     """Lê e trata um arquivo de empréstimos de um semestre."""
     caminho = os.path.join(RAW_DIR, arquivo)
     df = pd.read_csv(caminho, sep=None, engine="python")
@@ -91,13 +94,11 @@ def tratar_semestre(arquivo, ano, semestre, pandemia):
         df = df.drop(columns=["nome_usuario"])
 
     # --- Colunas de controle ---
-    df["ano"]              = ano
-    df["semestre"]         = semestre
-    df["periodo_pandemia"] = pandemia
+    df["ano"]      = ano
+    df["semestre"] = semestre
 
     print(f"  {arquivo}: {len(df):>7,} registros "
-          f"| removidos data={removidos_data} dup={removidos_dup} "
-          f"{'⚠ PANDEMIA' if pandemia else ''}")
+          f"| removidos data={removidos_data} dup={removidos_dup}")
 
     return df
 
@@ -106,14 +107,14 @@ def tratar_semestre(arquivo, ano, semestre, pandemia):
 # 2. PROCESSAR E CONSOLIDAR TODOS OS SEMESTRES
 # =============================================================================
 print("=" * 60)
-print("TRATAMENTO DE EMPRÉSTIMOS — 2018 a 2022")
+print("TRATAMENTO DE EMPRÉSTIMOS — 2018 a 2022 (sem pandemia)")
 print("=" * 60)
 print()
 
 semestres_processados = []
 
-for arquivo, ano, semestre, pandemia in SEMESTRES:
-    df_sem = tratar_semestre(arquivo, ano, semestre, pandemia)
+for arquivo, ano, semestre in SEMESTRES:
+    df_sem = tratar_semestre(arquivo, ano, semestre)
     semestres_processados.append(df_sem)
 
 # Concatenar tudo
@@ -139,15 +140,8 @@ if dup_cross > 0:
     consolidado = consolidado.drop_duplicates(subset=["id_emprestimo"])
     print(f"  → Removidas. Total final        : {len(consolidado):,}")
 
-print(f"\n  Registros por ano:")
-print(consolidado.groupby("ano")["id_emprestimo"].count().to_string())
-
-print(f"\n  Registros por semestre (ano x semestre):")
+print(f"\n  Registros por ano e semestre:")
 print(consolidado.groupby(["ano", "semestre"])["id_emprestimo"].count().to_string())
-
-print(f"\n  Registros período pandemia      : "
-      f"{consolidado['periodo_pandemia'].sum():,} "
-      f"({consolidado['periodo_pandemia'].mean():.1%})")
 
 print(f"\n  tipo_vinculo_usuario:")
 print(f"  {consolidado['tipo_vinculo_usuario'].value_counts().to_string()}")
